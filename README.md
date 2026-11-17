@@ -1,0 +1,1 @@
+# russia-mobile-whitelist-geosite
