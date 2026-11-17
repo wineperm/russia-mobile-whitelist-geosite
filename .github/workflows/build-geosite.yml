@@ -1,0 +1,117 @@
+name: Build GeoSite Database
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  push:
+    branches:
+      - main
+    paths:
+      - 'data/**'
+      - 'custom_allow.lst'
+      - 'custom_deny.lst'
+      - 'scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Clone domain-list-community
+        run: |
+          git clone https://github.com/v2fly/domain-list-community.git dlc
+          cd dlc
+          go mod download
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Fetch and convert domains
+        run: ./scripts/fetch-and-convert.sh
+
+      - name: Apply custom lists
+        run: ./scripts/apply-custom-lists.sh
+
+      - name: Build geosite.dat
+        run: |
+          cd dlc
+          go run ./ --datapath=../data
+          mv dlc.dat ../geosite.dat
+          cd ..
+          sha256sum geosite.dat > geosite.dat.sha256sum
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if [ -f ".last_checksum" ] && cmp -s .last_checksum geosite.dat.sha256sum; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "No changes detected"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Changes detected"
+            cp geosite.dat.sha256sum .last_checksum
+          fi
+
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add data/russia-mobile-whitelist custom_allow.lst custom_deny.lst .last_checksum
+          git diff --staged --quiet || git commit -m "Auto-update: domain lists and checksums [skip ci]"
+          git push
+
+      - name: Create Release
+        if: steps.check_changes.outputs.changed == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: release-${{ github.run_number }}
+          name: Release ${{ github.run_number }} (${{ github.sha }})
+          files: |
+            geosite.dat
+            geosite.dat.sha256sum
+          body: |
+            Автоматически сгенерированный geosite.dat
+            
+            **Список:** `geosite:russia-mobile-whitelist`
+            
+            **Источник:** [hxehex/russia-mobile-internet-whitelist](https://github.com/hxehex/russia-mobile-internet-whitelist)
+            
+            **Дата:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+            
+            **Использование в Passwall2:**
+            ```
+            Domain: geosite:russia-mobile-whitelist
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send Telegram notification
+        if: steps.check_changes.outputs.changed == 'true' && env.TELEGRAM_BOT_TOKEN != ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d chat_id="${TELEGRAM_CHAT_ID}" \
+            -d text="✅ GeoSite обновлён!
+          
+          📦 Release: ${{ github.run_number }}
+          🔗 https://github.com/${{ github.repository }}/releases/tag/release-${{ github.run_number }}
+          
+          Список: geosite:russia-mobile-whitelist"
