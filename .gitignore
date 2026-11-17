@@ -1,0 +1,30 @@
+# Go
+dlc/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Сгенерированные файлы
+geosite.dat
+geosite.dat.sha256sum
+data/*.raw
+
+# Временные файлы
+*.tmp
+*.tmp2
+*.sorted
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
